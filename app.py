@@ -135,6 +135,21 @@ def severity():
     return jsonify({"severity": results, "total": len(results)})
 
 
+@app.route("/api/docs")
+def api_docs():
+    return jsonify({
+        "openapi": "3.0.0",
+        "info": {"title": "CV Pipeline Inspector", "version": "1.0.0"},
+        "paths": {
+            "/api/health": {"get": {"summary": "Health check"}},
+            "/api/models": {"get": {"summary": "Model info"}},
+            "/api/detect": {"post": {"summary": "Detect anomalies in image features"}},
+            "/api/classify": {"post": {"summary": "Classify defect type"}},
+            "/api/severity": {"post": {"summary": "Estimate defect severity"}},
+        }
+    })
+
+
 _load_models()
 
 if __name__ == "__main__":
