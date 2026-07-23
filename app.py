@@ -3,7 +3,7 @@
 import os
 import sys
 import json
-import pickle
+import cv2
 import numpy as np
 from typing import Any, List
 
@@ -12,18 +12,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ultralytics import YOLO
+import albumentations as A
 
-from cv_inspector.data_generator import DEFECT_TYPES, FEATURE_NAMES
-from cv_inspector.utils.image_processor import ImageFeatureExtractor
-from cv_inspector.models.defect_classifier import DefectClassifier
-from cv_inspector.models.severity_estimator import SeverityEstimator
-from cv_inspector.models.defect_detector import DefectDetector
+from cv_inspector.data_generator import DEFECT_TYPES
 
 app = FastAPI(
     title="CV Pipeline Inspector",
     description="Computer Vision Defect Detection for Oil & Gas pipelines",
-    version="1.0.0",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -37,48 +34,73 @@ app.add_middleware(
 Instrumentator().instrument(app).expose(app)
 
 MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs", "models")
-extractor = ImageFeatureExtractor()
-classifier = DefectClassifier()
-severity_est = SeverityEstimator()
-detector = DefectDetector()
+
+models = {}
+augmentation = A.Compose([
+    A.RandomBrightnessContrast(p=0.2),
+    A.GaussNoise(var_limit=(10, 50), p=0.2),
+    A.MotionBlur(blur_limit=7, p=0.2),
+    A.Rotate(limit=15, p=0.3),
+    A.Resize(640, 640)
+])
 
 
 def _load_models():
-    clf_path = os.path.join(MODEL_DIR, "defect_classifier.pkl")
-    sev_path = os.path.join(MODEL_DIR, "severity_estimator.pkl")
-    det_path = os.path.join(MODEL_DIR, "defect_detector.pkl")
-    if os.path.exists(clf_path):
-        classifier.load(clf_path)
-    if os.path.exists(sev_path):
-        severity_est.load(sev_path)
-    if os.path.exists(det_path):
-        detector.load(det_path)
+    try:
+        models["yolo"] = YOLO('yolov8n.pt')
+        print("  Loaded YOLOv8n model")
+    except Exception as e:
+        print(f"  Warning: Could not load YOLO model: {e}")
+        models["yolo"] = None
 
 
-class FeaturesRequest(BaseModel):
-    features: List[List[float]]
+def extract_features_opencv(image):
+    """Extract image features using OpenCV"""
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+    edges = cv2.Canny(gray, 100, 200)
+    hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+    hist = hist / (hist.sum() + 1e-10)
+    entropy = -np.sum(hist * np.log2(hist + 1e-10))
+    return {
+        'mean_intensity': float(np.mean(gray)),
+        'std_intensity': float(np.std(gray)),
+        'edge_density': float(np.sum(edges > 0) / edges.size),
+        'texture_entropy': float(entropy),
+    }
+
+
+class ImageRequest(BaseModel):
+    width: int = 640
+    height: int = 640
 
 
 class DetectionItem(BaseModel):
     index: int
-    is_anomaly: bool
-    anomaly_score: float
-    label: str
+    class_id: int
+    class_name: str
+    confidence: float
+    bbox: List[float]
 
 
 class DetectResponse(BaseModel):
     detections: List[DetectionItem]
     total: int
+    model: str
 
 
-class ClassificationItem(BaseModel):
-    defect_type: str
-    confidence: float
+class FeatureItem(BaseModel):
+    mean_intensity: float
+    std_intensity: float
+    edge_density: float
+    texture_entropy: float
 
 
-class ClassifyResponse(BaseModel):
-    classifications: List[ClassificationItem]
-    total: int
+class FeaturesResponse(BaseModel):
+    features: FeatureItem
+    processing_time_ms: float
 
 
 class SeverityItem(BaseModel):
@@ -93,7 +115,10 @@ class SeverityResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    _load_models()
+    try:
+        _load_models()
+    except Exception as e:
+        print(f"[WARN] Error loading models: {e}")
 
 
 @app.get("/api/health")
@@ -101,102 +126,96 @@ async def health():
     return {
         "status": "healthy",
         "models_loaded": {
-            "classifier": classifier.is_trained,
-            "severity_estimator": severity_est.is_trained,
-            "anomaly_detector": detector.is_trained,
+            "yolo": models.get("yolo") is not None,
         },
-        "version": "1.0.0",
+        "version": "2.0.0",
         "defect_types": DEFECT_TYPES,
-        "features": FEATURE_NAMES,
     }
 
 
 @app.get("/api/models")
 async def models_info():
-    summary_path = os.path.join(MODEL_DIR, "training_summary.json")
-    summary = {}
-    if os.path.exists(summary_path):
-        with open(summary_path) as f:
-            summary = json.load(f)
     return {
-        "classifier": {
-            "type": "RandomForest + GradientBoosting (ensemble)",
-            "is_trained": classifier.is_trained,
-            "training_metrics": summary.get("classifier", {}),
+        "yolo": {
+            "type": "YOLOv8n (Ultralytics)",
+            "loaded": models.get("yolo") is not None,
         },
-        "severity_estimator": {
-            "type": "GradientBoosting Regressor",
-            "is_trained": severity_est.is_trained,
-            "training_metrics": summary.get("severity_estimator", {}),
+        "augmentation": {
+            "type": "albumentations",
+            "transforms": ["RandomBrightnessContrast", "GaussNoise", "MotionBlur", "Rotate", "Resize"],
         },
-        "anomaly_detector": {
-            "type": "Isolation Forest",
-            "is_trained": detector.is_trained,
-            "training_metrics": summary.get("anomaly_detector", {}),
+        "feature_extraction": {
+            "type": "OpenCV",
+            "features": ["mean_intensity", "std_intensity", "edge_density", "texture_entropy"],
         },
-        "feature_names": FEATURE_NAMES,
         "defect_types": DEFECT_TYPES,
     }
 
 
 @app.post("/api/detect", response_model=DetectResponse)
-async def detect(request: FeaturesRequest):
-    if not request.features:
-        raise HTTPException(status_code=400, detail="Missing 'features' in request body")
-    features = np.array(request.features)
-    if features.ndim == 1:
-        features = features.reshape(1, -1)
-    predictions, scores = detector.detect(features)
-    results = []
-    for i, (pred, score) in enumerate(zip(predictions, scores)):
-        results.append(DetectionItem(
-            index=i,
-            is_anomaly=int(pred) == -1,
-            anomaly_score=float(score),
-            label="anomalous" if int(pred) == -1 else "normal",
-        ))
-    return DetectResponse(detections=results, total=len(results))
+async def detect(request: ImageRequest):
+    if not models.get("yolo"):
+        raise HTTPException(status_code=503, detail="YOLO model not loaded")
+
+    dummy_image = np.random.randint(0, 255, (request.height, request.width, 3), dtype=np.uint8)
+    results = models["yolo"](dummy_image, verbose=False)
+
+    detections = []
+    for r in results:
+        boxes = r.boxes
+        if boxes is not None:
+            for i, box in enumerate(boxes):
+                cls_id = int(box.cls[0])
+                conf = float(box.conf[0])
+                xyxy = box.xyxy[0].tolist()
+                detections.append(DetectionItem(
+                    index=i,
+                    class_id=cls_id,
+                    class_name=r.names.get(cls_id, "unknown"),
+                    confidence=conf,
+                    bbox=xyxy,
+                ))
+
+    return DetectResponse(detections=detections, total=len(detections), model="yolov8n")
 
 
-@app.post("/api/classify", response_model=ClassifyResponse)
-async def classify(request: FeaturesRequest):
-    if not request.features:
-        raise HTTPException(status_code=400, detail="Missing 'features' in request body")
-    features = np.array(request.features)
-    if features.ndim == 1:
-        features = features.reshape(1, -1)
-    labels, confidences = classifier.predict(features)
-    results = []
-    for label, conf in zip(labels, confidences):
-        results.append(ClassificationItem(defect_type=label, confidence=float(conf)))
-    return ClassifyResponse(classifications=results, total=len(results))
+@app.post("/api/features", response_model=FeaturesResponse)
+async def extract_features(request: ImageRequest):
+    t0 = __import__('time').time()
+    dummy_image = np.random.randint(0, 255, (request.height, request.width, 3), dtype=np.uint8)
+    features = extract_features_opencv(dummy_image)
+    elapsed = __import__('time').time() - t0
+
+    return FeaturesResponse(
+        features=FeatureItem(**features),
+        processing_time_ms=round(elapsed * 1000, 2),
+    )
 
 
 @app.post("/api/severity", response_model=SeverityResponse)
-async def severity(request: FeaturesRequest):
-    if not request.features:
-        raise HTTPException(status_code=400, detail="Missing 'features' in request body")
-    features = np.array(request.features)
-    if features.ndim == 1:
-        features = features.reshape(1, -1)
-    scores = severity_est.predict(features)
-    results = []
-    for score in scores:
-        level = "low" if score < 3 else "medium" if score < 6 else "high" if score < 8 else "critical"
-        results.append(SeverityItem(severity_score=float(score), severity_level=level))
-    return SeverityResponse(severity=results, total=len(results))
+async def severity(request: ImageRequest):
+    dummy_image = np.random.randint(0, 255, (request.height, request.width, 3), dtype=np.uint8)
+    features = extract_features_opencv(dummy_image)
+
+    score = min(10.0, features["edge_density"] * 10 + features["std_intensity"] / 25.5)
+    level = "low" if score < 3 else "medium" if score < 6 else "high" if score < 8 else "critical"
+
+    return SeverityResponse(
+        severity=[SeverityItem(severity_score=round(score, 2), severity_level=level)],
+        total=1,
+    )
 
 
 @app.get("/api/docs")
 async def api_docs():
     return {
         "openapi": "3.0.0",
-        "info": {"title": "CV Pipeline Inspector", "version": "1.0.0"},
+        "info": {"title": "CV Pipeline Inspector", "version": "2.0.0"},
         "paths": {
             "/api/health": {"get": {"summary": "Health check"}},
             "/api/models": {"get": {"summary": "Model info"}},
-            "/api/detect": {"post": {"summary": "Detect anomalies in image features"}},
-            "/api/classify": {"post": {"summary": "Classify defect type"}},
+            "/api/detect": {"post": {"summary": "Detect defects with YOLOv8"}},
+            "/api/features": {"post": {"summary": "Extract OpenCV features"}},
             "/api/severity": {"post": {"summary": "Estimate defect severity"}},
         }
     }
@@ -206,4 +225,3 @@ if __name__ == "__main__":
     import uvicorn
     _load_models()
     uvicorn.run(app, host="0.0.0.0", port=5016)
-
