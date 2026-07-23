@@ -1,11 +1,15 @@
-"""Flask API for CV Pipeline Inspector."""
+"""FastAPI application for CV Pipeline Inspector."""
 
 import os
 import sys
 import json
 import pickle
 import numpy as np
-from flask import Flask, request, jsonify, render_template
+from typing import Any, List
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -15,7 +19,19 @@ from cv_inspector.models.defect_classifier import DefectClassifier
 from cv_inspector.models.severity_estimator import SeverityEstimator
 from cv_inspector.models.defect_detector import DefectDetector
 
-app = Flask(__name__)
+app = FastAPI(
+    title="CV Pipeline Inspector",
+    description="Computer Vision Defect Detection for Oil & Gas pipelines",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs", "models")
 extractor = ImageFeatureExtractor()
@@ -36,14 +52,50 @@ def _load_models():
         detector.load(det_path)
 
 
-@app.route("/")
-def index():
-    return render_template("index.html")
+class FeaturesRequest(BaseModel):
+    features: List[List[float]]
 
 
-@app.route("/api/health", methods=["GET"])
-def health():
-    return jsonify({
+class DetectionItem(BaseModel):
+    index: int
+    is_anomaly: bool
+    anomaly_score: float
+    label: str
+
+
+class DetectResponse(BaseModel):
+    detections: List[DetectionItem]
+    total: int
+
+
+class ClassificationItem(BaseModel):
+    defect_type: str
+    confidence: float
+
+
+class ClassifyResponse(BaseModel):
+    classifications: List[ClassificationItem]
+    total: int
+
+
+class SeverityItem(BaseModel):
+    severity_score: float
+    severity_level: str
+
+
+class SeverityResponse(BaseModel):
+    severity: List[SeverityItem]
+    total: int
+
+
+@app.on_event("startup")
+async def startup_event():
+    _load_models()
+
+
+@app.get("/api/health")
+async def health():
+    return {
         "status": "healthy",
         "models_loaded": {
             "classifier": classifier.is_trained,
@@ -53,17 +105,17 @@ def health():
         "version": "1.0.0",
         "defect_types": DEFECT_TYPES,
         "features": FEATURE_NAMES,
-    })
+    }
 
 
-@app.route("/api/models", methods=["GET"])
-def models_info():
+@app.get("/api/models")
+async def models_info():
     summary_path = os.path.join(MODEL_DIR, "training_summary.json")
     summary = {}
     if os.path.exists(summary_path):
         with open(summary_path) as f:
             summary = json.load(f)
-    return jsonify({
+    return {
         "classifier": {
             "type": "RandomForest + GradientBoosting (ensemble)",
             "is_trained": classifier.is_trained,
@@ -81,63 +133,60 @@ def models_info():
         },
         "feature_names": FEATURE_NAMES,
         "defect_types": DEFECT_TYPES,
-    })
+    }
 
 
-@app.route("/api/detect", methods=["POST"])
-def detect():
-    data = request.get_json()
-    if not data or "features" not in data:
-        return jsonify({"error": "Missing 'features' in request body"}), 400
-    features = np.array(data["features"])
+@app.post("/api/detect", response_model=DetectResponse)
+async def detect(request: FeaturesRequest):
+    if not request.features:
+        raise HTTPException(status_code=400, detail="Missing 'features' in request body")
+    features = np.array(request.features)
     if features.ndim == 1:
         features = features.reshape(1, -1)
     predictions, scores = detector.detect(features)
     results = []
     for i, (pred, score) in enumerate(zip(predictions, scores)):
-        results.append({
-            "index": i,
-            "is_anomaly": int(pred) == -1,
-            "anomaly_score": float(score),
-            "label": "anomalous" if int(pred) == -1 else "normal",
-        })
-    return jsonify({"detections": results, "total": len(results)})
+        results.append(DetectionItem(
+            index=i,
+            is_anomaly=int(pred) == -1,
+            anomaly_score=float(score),
+            label="anomalous" if int(pred) == -1 else "normal",
+        ))
+    return DetectResponse(detections=results, total=len(results))
 
 
-@app.route("/api/classify", methods=["POST"])
-def classify():
-    data = request.get_json()
-    if not data or "features" not in data:
-        return jsonify({"error": "Missing 'features' in request body"}), 400
-    features = np.array(data["features"])
+@app.post("/api/classify", response_model=ClassifyResponse)
+async def classify(request: FeaturesRequest):
+    if not request.features:
+        raise HTTPException(status_code=400, detail="Missing 'features' in request body")
+    features = np.array(request.features)
     if features.ndim == 1:
         features = features.reshape(1, -1)
     labels, confidences = classifier.predict(features)
     results = []
     for label, conf in zip(labels, confidences):
-        results.append({"defect_type": label, "confidence": float(conf)})
-    return jsonify({"classifications": results, "total": len(results)})
+        results.append(ClassificationItem(defect_type=label, confidence=float(conf)))
+    return ClassifyResponse(classifications=results, total=len(results))
 
 
-@app.route("/api/severity", methods=["POST"])
-def severity():
-    data = request.get_json()
-    if not data or "features" not in data:
-        return jsonify({"error": "Missing 'features' in request body"}), 400
-    features = np.array(data["features"])
+@app.post("/api/severity", response_model=SeverityResponse)
+async def severity(request: FeaturesRequest):
+    if not request.features:
+        raise HTTPException(status_code=400, detail="Missing 'features' in request body")
+    features = np.array(request.features)
     if features.ndim == 1:
         features = features.reshape(1, -1)
     scores = severity_est.predict(features)
     results = []
     for score in scores:
         level = "low" if score < 3 else "medium" if score < 6 else "high" if score < 8 else "critical"
-        results.append({"severity_score": float(score), "severity_level": level})
-    return jsonify({"severity": results, "total": len(results)})
+        results.append(SeverityItem(severity_score=float(score), severity_level=level))
+    return SeverityResponse(severity=results, total=len(results))
 
 
-@app.route("/api/docs")
-def api_docs():
-    return jsonify({
+@app.get("/api/docs")
+async def api_docs():
+    return {
         "openapi": "3.0.0",
         "info": {"title": "CV Pipeline Inspector", "version": "1.0.0"},
         "paths": {
@@ -147,10 +196,10 @@ def api_docs():
             "/api/classify": {"post": {"summary": "Classify defect type"}},
             "/api/severity": {"post": {"summary": "Estimate defect severity"}},
         }
-    })
+    }
 
-
-_load_models()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5016, debug=False)
+    import uvicorn
+    _load_models()
+    uvicorn.run(app, host="0.0.0.0", port=5016)
