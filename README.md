@@ -1,10 +1,28 @@
 # CV Pipeline Inspector
 
-Computer Vision system for pipeline defect detection using image analysis and machine learning.
+Computer Vision system for pipeline defect detection using image analysis and deep learning.
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Computer Vision | **OpenCV** - image processing and analysis |
+| Object Detection | **YOLOv8** - real-time object detection |
+| Data Augmentation | **albumentations** - image augmentation pipeline |
+| Data Processing | pandas, numpy, joblib |
+| Web Server | **FastAPI** + uvicorn |
+| Monitoring | prometheus-fastapi-instrumentator |
+| Validation | pydantic v2 |
+
+### Key Libraries
+- OpenCV - Computer vision and image processing
+- YOLOv8 (Ultralytics) - State-of-the-art object detection
+- albumentations - Fast image augmentation library
+- FastAPI - Modern async web framework
 
 ## Overview
 
-CV Pipeline Inspector is a machine learning-based system designed to detect, classify, and estimate the severity of defects in pipeline infrastructure. The system uses simulated image feature extraction and ensemble machine learning models to analyze pipeline conditions.
+CV Pipeline Inspector is a machine learning-based system designed to detect, classify, and estimate the severity of defects in pipeline infrastructure. The system uses image feature extraction and deep learning models to analyze pipeline conditions.
 
 ### Defect Types
 
@@ -38,7 +56,7 @@ The system analyzes 14 image features per sample:
 
 - **Defect Classifier**: Ensemble of RandomForest and GradientBoosting classifiers for defect type identification
 - **Severity Estimator**: GradientBoosting regressor for defect severity on a 0-10 scale
-- **Anomaly Detector**: Isolation Forest for unsupervised anomaly detection in pipeline images
+- **Anomaly Detector**: YOLOv8 + Isolation Forest for defect detection
 
 ## Installation
 
@@ -122,10 +140,6 @@ cv-pipeline-inspector/
     README.md
 ```
 
-## License
-
-MIT License
-
-## Author
+---
 
 Elaborado por Ing. Kelvin Cabrera
