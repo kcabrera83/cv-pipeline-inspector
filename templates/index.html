@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CV Pipeline Inspector</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+        }
+        .header {
+            background: #1e293b;
+            border-bottom: 2px solid #ef4444;
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { font-size: 1.5rem; color: #f8fafc; }
+        .header h1 span { color: #ef4444; }
+        .header .status { font-size: 0.85rem; color: #94a3b8; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 30px 40px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+        .card {
+            background: #1e293b;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            padding: 24px;
+        }
+        .card h2 {
+            font-size: 1.1rem;
+            color: #f8fafc;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #334155;
+        }
+        .card h2 span { color: #ef4444; }
+        .full-width { grid-column: 1 / -1; }
+        .upload-area {
+            border: 2px dashed #475569;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.3s;
+            margin-bottom: 16px;
+        }
+        .upload-area:hover { border-color: #ef4444; }
+        .upload-area p { color: #94a3b8; font-size: 0.9rem; }
+        .upload-area .icon { font-size: 2.5rem; margin-bottom: 8px; color: #475569; }
+        input[type="file"] { display: none; }
+        input[type="number"], textarea {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #e2e8f0;
+            padding: 10px 12px;
+            width: 100%;
+            font-size: 0.9rem;
+        }
+        textarea { resize: vertical; min-height: 80px; font-family: monospace; }
+        input[type="number"]:focus, textarea:focus {
+            outline: none;
+            border-color: #ef4444;
+        }
+        .btn {
+            background: #ef4444;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 24px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin-top: 12px;
+        }
+        .btn:hover { background: #dc2626; }
+        .btn:disabled { background: #475569; cursor: not-allowed; }
+        .btn-secondary {
+            background: #334155;
+        }
+        .btn-secondary:hover { background: #475569; }
+        .results { margin-top: 16px; }
+        .result-item {
+            background: #0f172a;
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-left: 3px solid #ef4444;
+        }
+        .result-item.healthy { border-left-color: #22c55e; }
+        .result-item .label { font-weight: 600; font-size: 0.95rem; }
+        .result-item .detail { color: #94a3b8; font-size: 0.85rem; margin-top: 4px; }
+        .confidence-bar {
+            height: 6px;
+            background: #334155;
+            border-radius: 3px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+        .confidence-fill {
+            height: 100%;
+            background: #ef4444;
+            border-radius: 3px;
+            transition: width 0.5s;
+        }
+        .severity-indicator {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .severity-low { background: #166534; color: #86efac; }
+        .severity-medium { background: #854d0e; color: #fde047; }
+        .severity-high { background: #9a3412; color: #fdba74; }
+        .severity-critical { background: #7f1d1d; color: #fca5a5; }
+        .model-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+        .model-card {
+            background: #0f172a;
+            border-radius: 8px;
+            padding: 16px;
+            border: 1px solid #334155;
+        }
+        .model-card h3 { font-size: 0.9rem; color: #f8fafc; margin-bottom: 8px; }
+        .model-card .metric { font-size: 0.8rem; color: #94a3b8; margin-top: 4px; }
+        .model-card .metric strong { color: #e2e8f0; }
+        .chart-container { position: relative; height: 250px; margin-top: 16px; }
+        .tab-container { display: flex; gap: 4px; margin-bottom: 16px; }
+        .tab {
+            padding: 8px 16px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px 6px 0 0;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .tab.active { background: #1e293b; color: #ef4444; border-bottom-color: #1e293b; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .defect-preview {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .defect-tag {
+            background: #0f172a;
+            border-radius: 4px;
+            padding: 6px 10px;
+            font-size: 0.8rem;
+            text-align: center;
+            border: 1px solid #334155;
+        }
+        .defect-tag.active { border-color: #ef4444; color: #ef4444; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>CV</span> Pipeline Inspector</h1>
+        <div class="status" id="apiStatus">Checking API...</div>
+    </div>
+    <div class="container">
+        <div class="grid">
+            <div class="card">
+                <h2><span>1.</span> Input Features</h2>
+                <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                    <div class="icon">&#9744;</div>
+                    <p>Upload pipeline image or enter feature vector manually</p>
+                </div>
+                <input type="file" id="fileInput" accept="image/*" onchange="handleFileUpload(this)">
+                <label style="font-size:0.85rem; color:#94a3b8; margin-bottom:6px; display:block;">Or paste 14 feature values (comma-separated):</label>
+                <textarea id="featureInput" placeholder="120.5, 30.2, 0.25, 4.1, 140.0, 120.0, 100.0, 0.55, 1200.0, 30.0, 120.0, 0.1, 18.0, 0.25"></textarea>
+                <div style="display:flex; gap:8px; margin-top:12px;">
+                    <button class="btn" onclick="runFullAnalysis()">Run Full Analysis</button>
+                    <button class="btn btn-secondary" onclick="loadSampleData()">Load Sample</button>
+                </div>
+            </div>
+            <div class="card">
+                <h2><span>2.</span> Defect Classification</h2>
+                <div id="classificationResults" class="results">
+                    <p style="color:#64748b; font-size:0.9rem;">Run analysis to see results</p>
+                </div>
+            </div>
+            <div class="card">
+                <h2><span>3.</span> Severity Analysis</h2>
+                <div id="severityResults" class="results">
+                    <p style="color:#64748b; font-size:0.9rem;">Run analysis to see results</p>
+                </div>
+                <div class="chart-container">
+                    <canvas id="severityChart"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <h2><span>4.</span> Anomaly Detection</h2>
+                <div id="anomalyResults" class="results">
+                    <p style="color:#64748b; font-size:0.9rem;">Run analysis to see results</p>
+                </div>
+            </div>
+            <div class="card full-width">
+                <h2><span>5.</span> Model Information</h2>
+                <div id="modelInfo" class="model-grid">
+                    <p style="color:#64748b; font-size:0.9rem;">Loading model info...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        let severityChart = null;
+        const API_BASE = '';
+        const sampleData = [
+            [90.2, 35.5, 0.32, 4.8, 155.0, 80.0, 50.0, 0.62, 1800.0, 35.0, 95.0, 0.22, 42.0, 0.39],
+            [145.0, 12.0, 0.08, 2.5, 160.0, 155.0, 148.0, 0.15, 250.0, 10.0, 154.3, 0.03, 6.0, 0.08],
+            [65.0, 42.0, 0.55, 5.2, 50.0, 55.0, 48.0, 0.78, 2500.0, 48.0, 51.0, 0.11, 3.5, 0.65],
+        ];
+        let sampleIndex = 0;
+
+        async function checkHealth() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/health`);
+                const data = await resp.json();
+                const statusEl = document.getElementById('apiStatus');
+                if (data.status === 'healthy') {
+                    statusEl.textContent = 'API Connected | Models Loaded: ' + 
+                        Object.values(data.models_loaded).filter(Boolean).length + '/3';
+                    statusEl.style.color = '#22c55e';
+                } else {
+                    statusEl.textContent = 'API Degraded';
+                    statusEl.style.color = '#ef4444';
+                }
+            } catch (e) {
+                document.getElementById('apiStatus').textContent = 'API Unreachable';
+                document.getElementById('apiStatus').style.color = '#ef4444';
+            }
+        }
+
+        async function loadModelInfo() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/models`);
+                const data = await resp.json();
+                const container = document.getElementById('modelInfo');
+                container.innerHTML = `
+                    <div class="model-card">
+                        <h3>Defect Classifier</h3>
+                        <div class="metric">Type: <strong>${data.classifier.type.split('(')[0].trim()}</strong></div>
+                        <div class="metric">Trained: <strong>${data.classifier.is_trained ? 'Yes' : 'No'}</strong></div>
+                        <div class="metric">CV Accuracy: <strong>${data.classifier.training_metrics.random_forest_cv_mean ? (data.classifier.training_metrics.random_forest_cv_mean * 100).toFixed(1) + '%' : 'N/A'}</strong></div>
+                    </div>
+                    <div class="model-card">
+                        <h3>Severity Estimator</h3>
+                        <div class="metric">Type: <strong>${data.severity_estimator.type}</strong></div>
+                        <div class="metric">Trained: <strong>${data.severity_estimator.is_trained ? 'Yes' : 'No'}</strong></div>
+                        <div class="metric">CV R2: <strong>${data.severity_estimator.training_metrics.cv_r2_mean ? data.severity_estimator.training_metrics.cv_r2_mean.toFixed(4) : 'N/A'}</strong></div>
+                    </div>
+                    <div class="model-card">
+                        <h3>Anomaly Detector</h3>
+                        <div class="metric">Type: <strong>${data.anomaly_detector.type}</strong></div>
+                        <div class="metric">Trained: <strong>${data.anomaly_detector.is_trained ? 'Yes' : 'No'}</strong></div>
+                        <div class="metric">Anomaly Ratio: <strong>${data.anomaly_detector.training_metrics.anomaly_ratio ? (data.anomaly_detector.training_metrics.anomaly_ratio * 100).toFixed(1) + '%' : 'N/A'}</strong></div>
+                    </div>
+                `;
+            } catch (e) {
+                document.getElementById('modelInfo').innerHTML = '<p style="color:#ef4444;">Could not load model info</p>';
+            }
+        }
+
+        function loadSampleData() {
+            const input = document.getElementById('featureInput');
+            input.value = sampleData[sampleIndex].join(', ');
+            sampleIndex = (sampleIndex + 1) % sampleData.length;
+        }
+
+        function handleFileUpload(input) {
+            if (input.files.length > 0) {
+                loadSampleData();
+            }
+        }
+
+        function getFeatures() {
+            const raw = document.getElementById('featureInput').value.trim();
+            if (!raw) return null;
+            const features = raw.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+            if (features.length < 14) {
+                alert('Please provide at least 14 numeric feature values.');
+                return null;
+            }
+            return features.slice(0, 14);
+        }
+
+        async function runFullAnalysis() {
+            const features = getFeatures();
+            if (!features) return;
+
+            document.getElementById('classificationResults').innerHTML = '<p style="color:#94a3b8;">Analyzing...</p>';
+            document.getElementById('severityResults').innerHTML = '<p style="color:#94a3b8;">Estimating severity...</p>';
+            document.getElementById('anomalyResults').innerHTML = '<p style="color:#94a3b8;">Checking for anomalies...</p>';
+
+            try {
+                const [clfResp, sevResp, detResp] = await Promise.all([
+                    fetch(`${API_BASE}/api/classify`, {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ features })
+                    }),
+                    fetch(`${API_BASE}/api/severity`, {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ features })
+                    }),
+                    fetch(`${API_BASE}/api/detect`, {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ features })
+                    }),
+                ]);
+
+                const clfData = await clfResp.json();
+                const sevData = await sevResp.json();
+                const detData = await detResp.json();
+
+                renderClassification(clfData.classifications);
+                renderSeverity(sevData.severity);
+                renderAnomaly(detData.detections);
+            } catch (e) {
+                document.getElementById('classificationResults').innerHTML = '<p style="color:#ef4444;">Error: ' + e.message + '</p>';
+            }
+        }
+
+        function renderClassification(classifications) {
+            const container = document.getElementById('classificationResults');
+            container.innerHTML = classifications.map(c => `
+                <div class="result-item ${c.defect_type === 'healthy' ? 'healthy' : ''}">
+                    <div class="label">${c.defect_type.replace('_', ' ').toUpperCase()}</div>
+                    <div class="detail">Confidence: ${(c.confidence * 100).toFixed(1)}%</div>
+                    <div class="confidence-bar"><div class="confidence-fill" style="width:${c.confidence * 100}%"></div></div>
+                </div>
+            `).join('');
+        }
+
+        function renderSeverity(severity) {
+            const container = document.getElementById('severityResults');
+            container.innerHTML = severity.map(s => {
+                const level = s.severity_level;
+                return `
+                    <div class="result-item">
+                        <div class="label">Severity Score: ${s.severity_score.toFixed(2)} / 10</div>
+                        <div class="detail">
+                            <span class="severity-indicator severity-${level}">${level.toUpperCase()}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            updateSeverityChart(severity);
+        }
+
+        function renderAnomaly(detections) {
+            const container = document.getElementById('anomalyResults');
+            container.innerHTML = detections.map(d => `
+                <div class="result-item ${!d.is_anomaly ? 'healthy' : ''}">
+                    <div class="label">${d.is_anomaly ? 'ANOMALY DETECTED' : 'Normal Pattern'}</div>
+                    <div class="detail">Anomaly Score: ${d.anomaly_score.toFixed(4)}</div>
+                    <div class="confidence-bar"><div class="confidence-fill" style="width:${Math.min(100, Math.abs(d.anomaly_score) * 100)}%"></div></div>
+                </div>
+            `).join('');
+        }
+
+        function updateSeverityChart(severity) {
+            const ctx = document.getElementById('severityChart').getContext('2d');
+            if (severityChart) severityChart.destroy();
+            const score = severity[0].severity_score;
+            severityChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Severity', 'Remaining'],
+                    datasets: [{
+                        data: [score, 10 - score],
+                        backgroundColor: [
+                            score < 3 ? '#22c55e' : score < 6 ? '#eab308' : score < 8 ? '#f97316' : '#ef4444',
+                            '#1e293b'
+                        ],
+                        borderWidth: 0,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '70%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false },
+                    }
+                },
+                plugins: [{
+                    id: 'centerText',
+                    afterDraw: function(chart) {
+                        const { ctx, width, height } = chart;
+                        ctx.save();
+                        ctx.textAlign = 'center';
+                        ctx.fillStyle = '#f8fafc';
+                        ctx.font = 'bold 24px sans-serif';
+                        ctx.fillText(score.toFixed(1), width / 2, height / 2 + 8);
+                        ctx.font = '12px sans-serif';
+                        ctx.fillStyle = '#94a3b8';
+                        ctx.fillText('severity', width / 2, height / 2 + 26);
+                        ctx.restore();
+                    }
+                }]
+            });
+        }
+
+        checkHealth();
+        loadModelInfo();
+    </script>
+</body>
+</html>
