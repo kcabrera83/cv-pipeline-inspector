@@ -9,6 +9,7 @@ from typing import Any, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +33,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+Instrumentator().instrument(app).expose(app)
 
 MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs", "models")
 extractor = ImageFeatureExtractor()
@@ -203,3 +206,4 @@ if __name__ == "__main__":
     import uvicorn
     _load_models()
     uvicorn.run(app, host="0.0.0.0", port=5016)
+
