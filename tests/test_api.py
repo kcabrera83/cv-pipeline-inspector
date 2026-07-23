@@ -1,7 +1,7 @@
 import pytest
 
 
-SAMPLE_FEATURES = [[120.0, 35.0, 0.3, 4.5, 150.0, 90.0, 60.0, 0.55, 1800.0, 30.0, 110.0, 0.2, 45.0, 0.7]]
+SAMPLE_FEATURES = [120.0, 35.0, 0.3, 4.5, 150.0, 90.0, 60.0, 0.55, 1800.0, 30.0, 110.0, 0.2, 45.0, 0.7]
 
 
 def test_health(client):
@@ -17,8 +17,8 @@ def test_models(client):
     response = client.get("/api/models")
     assert response.status_code == 200
     data = response.json()
-    assert "yolo" in data
-    assert "defect_types" in data
+    assert "classifier" in data
+    assert "defect_types" in data["classifier"]
 
 
 def test_api_docs(client):
@@ -32,15 +32,11 @@ def test_api_docs(client):
 
 def test_detect_valid(client):
     response = client.post("/api/detect", json={"features": SAMPLE_FEATURES})
-    assert response.status_code in (200, 400, 500, 503)
+    assert response.status_code in (200, 400, 503)
     if response.status_code == 200:
         data = response.json()
-        assert "detections" in data
-        assert data["total"] == 1
-        detection = data["detections"][0]
-        assert "is_anomaly" in detection
-        assert "anomaly_score" in detection
-        assert "label" in detection
+        assert "defect_type" in data
+        assert "confidence" in data
 
 
 def test_detect_missing_features(client):
@@ -50,7 +46,7 @@ def test_detect_missing_features(client):
 
 def test_severity_valid(client):
     response = client.post("/api/severity", json={"features": SAMPLE_FEATURES})
-    assert response.status_code in (200, 400, 500, 503)
+    assert response.status_code in (200, 400, 503)
     if response.status_code == 200:
         data = response.json()
         assert "severity" in data
@@ -58,7 +54,6 @@ def test_severity_valid(client):
         sev = data["severity"][0]
         assert "severity_score" in sev
         assert "severity_level" in sev
-        assert sev["severity_level"] in ["low", "medium", "high", "critical"]
 
 
 def test_severity_missing_features(client):

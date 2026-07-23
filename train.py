@@ -8,24 +8,13 @@ import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ultralytics import YOLO
 import albumentations as A
 
-from cv_inspector.data_generator import generate_samples, DEFECT_TYPES
+from cv_inspector.data_generator import generate_samples, DEFECT_TYPES, FEATURE_NAMES
+from cv_inspector.models.defect_classifier import DefectClassifier
+from cv_inspector.models.severity_estimator import SeverityEstimator
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs", "models")
-
-
-def build_yolo_model(num_classes=6):
-    """Build YOLOv8 model for defect detection"""
-    model = YOLO('yolov8n.pt')
-    return model
-
-
-def train_yolo(model, data_yaml, epochs=50):
-    """Train YOLO model on defect dataset"""
-    results = model.train(data=data_yaml, epochs=epochs, imgsz=640)
-    return model
 
 
 def build_augmentation_pipeline():
@@ -68,26 +57,43 @@ def main():
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # Step 1: Generate synthetic data
-    print("\n[1/4] Generating synthetic dataset...")
+    # Step 1: Generate synthetic feature data
+    print("\n[1/5] Generating synthetic dataset...")
     X, y, severities = generate_samples(n_per_class=300, seed=42)
     print(f"  Total samples: {X.shape[0]}")
     print(f"  Features per sample: {X.shape[1]}")
     print(f"  Defect classes: {', '.join(DEFECT_TYPES)}")
 
     # Step 2: Build augmentation pipeline
-    print("\n[2/4] Building albumentations augmentation pipeline...")
+    print("\n[2/5] Building albumentations augmentation pipeline...")
     transform = build_augmentation_pipeline()
     print("  Augmentations: RandomBrightnessContrast, GaussNoise, MotionBlur, Rotate, Resize")
 
-    # Step 3: Build YOLOv8 model
-    print("\n[3/4] Initializing YOLOv8n model...")
-    yolo_model = build_yolo_model(num_classes=len(DEFECT_TYPES))
-    print(f"  YOLOv8n loaded (pretrained weights)")
-    print(f"  Model info: {yolo_model.info()}")
+    # Step 3: Train defect classifier
+    print("\n[3/5] Training defect classifier (RandomForest + GradientBoosting)...")
+    classifier = DefectClassifier()
+    clf_metrics = classifier.train(X, y)
+    print(f"  RandomForest CV accuracy: {clf_metrics['random_forest_cv_mean']:.4f} (+/- {clf_metrics['random_forest_cv_std']:.4f})")
+    print(f"  GradientBoosting CV accuracy: {clf_metrics['gradient_boosting_cv_mean']:.4f} (+/- {clf_metrics['gradient_boosting_cv_std']:.4f})")
+    print(f"  RandomForest train accuracy: {clf_metrics['random_forest_train_accuracy']:.4f}")
+    print(f"  GradientBoosting train accuracy: {clf_metrics['gradient_boosting_train_accuracy']:.4f}")
+    classifier_path = os.path.join(OUTPUT_DIR, "defect_classifier.pkl")
+    classifier.save(classifier_path)
+    print(f"  Classifier saved to {classifier_path}")
 
-    # Step 4: Extract features with OpenCV and save summary
-    print("\n[4/4] Feature extraction demo with OpenCV...")
+    # Step 4: Train severity estimator
+    print("\n[4/5] Training severity estimator (GradientBoosting regression)...")
+    severity_est = SeverityEstimator()
+    sev_metrics = severity_est.train(X, severities)
+    print(f"  CV R2: {sev_metrics['cv_r2_mean']:.4f} (+/- {sev_metrics['cv_r2_std']:.4f})")
+    print(f"  Train MAE: {sev_metrics['train_mae']:.4f}")
+    print(f"  Train R2: {sev_metrics['train_r2']:.4f}")
+    severity_path = os.path.join(OUTPUT_DIR, "severity_estimator.pkl")
+    severity_est.save(severity_path)
+    print(f"  Severity estimator saved to {severity_path}")
+
+    # Step 5: Feature extraction demo with OpenCV
+    print("\n[5/5] Feature extraction demo with OpenCV...")
     sample_image = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
     features = extract_features_opencv(sample_image)
     print(f"  Sample feature extraction:")
@@ -96,11 +102,15 @@ def main():
 
     # Save training summary
     summary = {
-        "yolo_model": "yolov8n.pt",
         "num_classes": len(DEFECT_TYPES),
         "defect_types": DEFECT_TYPES,
+        "feature_names": FEATURE_NAMES,
+        "n_features": len(FEATURE_NAMES),
+        "n_samples": X.shape[0],
         "augmentation": ["RandomBrightnessContrast", "GaussNoise", "MotionBlur", "Rotate", "Resize"],
         "opencv_features": list(features.keys()),
+        "classifier_metrics": clf_metrics,
+        "severity_metrics": sev_metrics,
     }
     summary_path = os.path.join(OUTPUT_DIR, "training_summary.json")
     with open(summary_path, "w") as f:
@@ -109,7 +119,7 @@ def main():
     print("\n" + "=" * 70)
     print("  Training Summary")
     print("=" * 70)
-    print(json.dumps(summary, indent=2))
+    print(json.dumps({k: v for k, v in summary.items() if k not in ("classifier_metrics", "severity_metrics")}, indent=2))
     print(f"\nModels saved to: {OUTPUT_DIR}")
     print("Training complete.")
 

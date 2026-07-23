@@ -3,19 +3,21 @@
 import os
 import sys
 import json
+import base64
 import cv2
 import numpy as np
-from typing import Any, List
+from typing import Any, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
-from ultralytics import YOLO
 import albumentations as A
 
-from cv_inspector.data_generator import DEFECT_TYPES
+from cv_inspector.data_generator import DEFECT_TYPES, FEATURE_NAMES
+from cv_inspector.models.defect_classifier import DefectClassifier
+from cv_inspector.models.severity_estimator import SeverityEstimator
 
 app = FastAPI(
     title="CV Pipeline Inspector",
@@ -46,12 +48,24 @@ augmentation = A.Compose([
 
 
 def _load_models():
-    try:
-        models["yolo"] = YOLO('yolov8n.pt')
-        print("  Loaded YOLOv8n model")
-    except Exception as e:
-        print(f"  Warning: Could not load YOLO model: {e}")
-        models["yolo"] = None
+    classifier_path = os.path.join(MODEL_DIR, "defect_classifier.pkl")
+    severity_path = os.path.join(MODEL_DIR, "severity_estimator.pkl")
+
+    if os.path.exists(classifier_path):
+        clf = DefectClassifier()
+        clf.load(classifier_path)
+        models["classifier"] = clf
+        print("  Loaded DefectClassifier")
+    else:
+        print("  Warning: defect_classifier.pkl not found, run train.py first")
+
+    if os.path.exists(severity_path):
+        est = SeverityEstimator()
+        est.load(severity_path)
+        models["severity"] = est
+        print("  Loaded SeverityEstimator")
+    else:
+        print("  Warning: severity_estimator.pkl not found, run train.py first")
 
 
 def extract_features_opencv(image):
@@ -72,22 +86,14 @@ def extract_features_opencv(image):
     }
 
 
-class ImageRequest(BaseModel):
-    width: int = 640
-    height: int = 640
-
-
-class DetectionItem(BaseModel):
-    index: int
-    class_id: int
-    class_name: str
-    confidence: float
-    bbox: List[float]
+class DetectRequest(BaseModel):
+    features: List[float]
 
 
 class DetectResponse(BaseModel):
-    detections: List[DetectionItem]
-    total: int
+    defect_type: str
+    confidence: float
+    all_probabilities: dict
     model: str
 
 
@@ -98,9 +104,22 @@ class FeatureItem(BaseModel):
     texture_entropy: float
 
 
+class FeaturesFromImageRequest(BaseModel):
+    image_base64: str
+
+
+class FeaturesFromFeaturesRequest(BaseModel):
+    features: List[float]
+
+
 class FeaturesResponse(BaseModel):
-    features: FeatureItem
+    features: dict
+    source: str
     processing_time_ms: float
+
+
+class SeverityRequest(BaseModel):
+    features: List[float]
 
 
 class SeverityItem(BaseModel):
@@ -126,78 +145,100 @@ async def health():
     return {
         "status": "healthy",
         "models_loaded": {
-            "yolo": models.get("yolo") is not None,
+            "classifier": "classifier" in models,
+            "severity_estimator": "severity" in models,
         },
         "version": "2.0.0",
         "defect_types": DEFECT_TYPES,
+        "notes": "YOLO weights are COCO-pretrained (general objects); defect detection uses the trained classifier on extracted features.",
     }
 
 
 @app.get("/api/models")
 async def models_info():
     return {
-        "yolo": {
-            "type": "YOLOv8n (Ultralytics)",
-            "loaded": models.get("yolo") is not None,
+        "classifier": {
+            "type": "DefectClassifier (RandomForest + GradientBoosting ensemble)",
+            "loaded": "classifier" in models,
+            "defect_types": DEFECT_TYPES,
+            "feature_names": FEATURE_NAMES,
+            "input_dim": len(FEATURE_NAMES),
+        },
+        "severity_estimator": {
+            "type": "SeverityEstimator (GradientBoosting regression)",
+            "loaded": "severity" in models,
+            "scale": "0-10",
         },
         "augmentation": {
             "type": "albumentations",
             "transforms": ["RandomBrightnessContrast", "GaussNoise", "MotionBlur", "Rotate", "Resize"],
         },
-        "feature_extraction": {
+        "opencv_feature_extraction": {
             "type": "OpenCV",
             "features": ["mean_intensity", "std_intensity", "edge_density", "texture_entropy"],
+            "note": "Used for image-level feature extraction from raw images",
         },
-        "defect_types": DEFECT_TYPES,
     }
 
 
 @app.post("/api/detect", response_model=DetectResponse)
-async def detect(request: ImageRequest):
-    if not models.get("yolo"):
-        raise HTTPException(status_code=503, detail="YOLO model not loaded")
+async def detect(request: DetectRequest):
+    if "classifier" not in models:
+        raise HTTPException(status_code=503, detail="Defect classifier not loaded. Run train.py first.")
 
-    dummy_image = np.random.randint(0, 255, (request.height, request.width, 3), dtype=np.uint8)
-    results = models["yolo"](dummy_image, verbose=False)
+    features = np.array(request.features).reshape(1, -1)
+    if features.shape[1] != len(FEATURE_NAMES):
+        raise HTTPException(status_code=400, detail=f"Expected {len(FEATURE_NAMES)} features, got {features.shape[1]}")
 
-    detections = []
-    for r in results:
-        boxes = r.boxes
-        if boxes is not None:
-            for i, box in enumerate(boxes):
-                cls_id = int(box.cls[0])
-                conf = float(box.conf[0])
-                xyxy = box.xyxy[0].tolist()
-                detections.append(DetectionItem(
-                    index=i,
-                    class_id=cls_id,
-                    class_name=r.names.get(cls_id, "unknown"),
-                    confidence=conf,
-                    bbox=xyxy,
-                ))
+    labels, confidences = models["classifier"].predict(features)
+    probs = {}
+    rf_probs = models["classifier"].random_forest.predict_proba(features)[0]
+    gb_probs = models["classifier"].gradient_boosting.predict_proba(features)[0]
+    ensemble_probs = (rf_probs + gb_probs) / 2.0
+    for i, cls in enumerate(models["classifier"].label_encoder.classes_):
+        probs[cls] = round(float(ensemble_probs[i]), 4)
 
-    return DetectResponse(detections=detections, total=len(detections), model="yolov8n")
+    return DetectResponse(
+        defect_type=str(labels[0]),
+        confidence=round(float(confidences[0]), 4),
+        all_probabilities=probs,
+        model="ensemble(classifier)",
+    )
 
 
 @app.post("/api/features", response_model=FeaturesResponse)
-async def extract_features(request: ImageRequest):
+async def extract_features(request: FeaturesFromImageRequest):
     t0 = __import__('time').time()
-    dummy_image = np.random.randint(0, 255, (request.height, request.width, 3), dtype=np.uint8)
-    features = extract_features_opencv(dummy_image)
-    elapsed = __import__('time').time() - t0
 
+    try:
+        image_bytes = base64.b64decode(request.image_base64)
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError("Could not decode image")
+        features = extract_features_opencv(image)
+        source = "opencv_from_image"
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 image data")
+
+    elapsed = __import__('time').time() - t0
     return FeaturesResponse(
-        features=FeatureItem(**features),
+        features=features,
+        source=source,
         processing_time_ms=round(elapsed * 1000, 2),
     )
 
 
 @app.post("/api/severity", response_model=SeverityResponse)
-async def severity(request: ImageRequest):
-    dummy_image = np.random.randint(0, 255, (request.height, request.width, 3), dtype=np.uint8)
-    features = extract_features_opencv(dummy_image)
+async def severity(request: SeverityRequest):
+    if "severity" not in models:
+        raise HTTPException(status_code=503, detail="Severity estimator not loaded. Run train.py first.")
 
-    score = min(10.0, features["edge_density"] * 10 + features["std_intensity"] / 25.5)
+    features = np.array(request.features).reshape(1, -1)
+    if features.shape[1] != len(FEATURE_NAMES):
+        raise HTTPException(status_code=400, detail=f"Expected {len(FEATURE_NAMES)} features, got {features.shape[1]}")
+
+    score = float(models["severity"].predict(features)[0])
     level = "low" if score < 3 else "medium" if score < 6 else "high" if score < 8 else "critical"
 
     return SeverityResponse(
@@ -214,9 +255,9 @@ async def api_docs():
         "paths": {
             "/api/health": {"get": {"summary": "Health check"}},
             "/api/models": {"get": {"summary": "Model info"}},
-            "/api/detect": {"post": {"summary": "Detect defects with YOLOv8"}},
-            "/api/features": {"post": {"summary": "Extract OpenCV features"}},
-            "/api/severity": {"post": {"summary": "Estimate defect severity"}},
+            "/api/detect": {"post": {"summary": "Classify defect type from feature vector"}},
+            "/api/features": {"post": {"summary": "Extract OpenCV features from base64 image"}},
+            "/api/severity": {"post": {"summary": "Estimate defect severity from feature vector"}},
         }
     }
 
