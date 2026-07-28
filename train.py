@@ -1,5 +1,3 @@
-"""Train all models and save them to outputs/models/."""
-
 import os
 import sys
 import json
@@ -51,15 +49,13 @@ def extract_features_opencv(image):
 
 
 def main():
-    print("=" * 70)
-    print("  CV Pipeline Inspector - Model Training Pipeline")
-    print("=" * 70)
+    pass
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # Step 1: Generate synthetic feature data
     print("\n[1/5] Generating synthetic dataset...")
-    X, y, severities = generate_samples(n_per_class=300, seed=42)
+    X, y, severities = generate_samples(n_per_class=300, seed=2024)
     print(f"  Total samples: {X.shape[0]}")
     print(f"  Features per sample: {X.shape[1]}")
     print(f"  Defect classes: {', '.join(DEFECT_TYPES)}")
@@ -67,7 +63,7 @@ def main():
     # Step 2: Build augmentation pipeline
     print("\n[2/5] Building albumentations augmentation pipeline...")
     transform = build_augmentation_pipeline()
-    print("  Augmentations: RandomBrightnessContrast, GaussNoise, MotionBlur, Rotate, Resize")
+    pass
 
     # Step 3: Train defect classifier
     print("\n[3/5] Training defect classifier (RandomForest + GradientBoosting)...")
@@ -117,8 +113,7 @@ def main():
         json.dump(summary, f, indent=2)
 
     print("\n" + "=" * 70)
-    print("  Training Summary")
-    print("=" * 70)
+    pass
     print(json.dumps({k: v for k, v in summary.items() if k not in ("classifier_metrics", "severity_metrics")}, indent=2))
     print(f"\nModels saved to: {OUTPUT_DIR}")
     print("Training complete.")

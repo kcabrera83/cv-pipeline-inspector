@@ -1,5 +1,3 @@
-"""FastAPI application for CV Pipeline Inspector."""
-
 import os
 import sys
 import json
@@ -22,7 +20,7 @@ from cv_inspector.models.severity_estimator import SeverityEstimator
 app = FastAPI(
     title="CV Pipeline Inspector",
     description="Computer Vision Defect Detection for Oil & Gas pipelines",
-    version="2.0.0",
+    version="0.1",
 )
 
 app.add_middleware(

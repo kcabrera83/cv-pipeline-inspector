@@ -1,5 +1,3 @@
-"""Synthetic image feature generator for pipeline defect simulation."""
-
 import numpy as np
 
 
@@ -94,7 +92,7 @@ def _uniform_range(low, high, size, rng):
     return rng.uniform(low, high, size)
 
 
-def generate_samples(n_per_class=200, seed=42):
+def generate_samples(n_per_class=200, seed=2024):
     """Generate synthetic feature vectors simulating pipeline image analysis."""
     rng = np.random.RandomState(seed)
     all_features = []

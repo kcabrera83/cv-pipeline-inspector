@@ -1,5 +1,3 @@
-"""Image feature extraction utilities (simulated for non-image input)."""
-
 import numpy as np
 
 

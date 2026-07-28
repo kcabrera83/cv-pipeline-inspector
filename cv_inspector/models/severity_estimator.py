@@ -1,5 +1,3 @@
-"""Defect severity estimator using GradientBoosting regression."""
-
 import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.model_selection import cross_val_score
@@ -19,7 +17,7 @@ class SeverityEstimator:
             subsample=0.8,
             min_samples_split=5,
             min_samples_leaf=2,
-            random_state=42,
+            random_state=2024,
         )
         self.is_trained = False
 

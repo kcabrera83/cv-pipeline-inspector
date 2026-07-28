@@ -1,5 +1,3 @@
-"""API tests for CV Pipeline Inspector."""
-
 import os
 import sys
 import json
@@ -32,7 +30,7 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(len(data["feature_names"]), 14)
 
     def test_detect_with_features(self):
-        X, _, _ = generate_samples(n_per_class=1, seed=99)
+        X, _, _ = generate_samples(n_per_class=1, seed=55)
         payload = {"features": X[0].tolist()}
         resp = self.client.post("/api/detect", json=payload)
         data = resp.json()
@@ -46,7 +44,7 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
 
     def test_classify_with_features(self):
-        X, _, _ = generate_samples(n_per_class=1, seed=77)
+        X, _, _ = generate_samples(n_per_class=1, seed=137)
         payload = {"features": X[0].tolist()}
         resp = self.client.post("/api/classify", json=payload)
         data = resp.json()

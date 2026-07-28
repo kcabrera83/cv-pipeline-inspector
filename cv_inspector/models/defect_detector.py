@@ -1,5 +1,3 @@
-"""Anomaly detector using Isolation Forest for pipeline images."""
-
 import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
@@ -16,7 +14,7 @@ class DefectDetector:
             n_estimators=200,
             contamination=contamination,
             max_samples="auto",
-            random_state=42,
+            random_state=2024,
             n_jobs=-1,
         )
         self.is_trained = False

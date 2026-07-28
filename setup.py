@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="cv-pipeline-inspector",
-    version="1.0.0",
+    version="0.1",
     author="Ing. Kelvin Cabrera",
     author_email="kelvin@example.com",
     description="Computer Vision system for pipeline defect detection using image analysis",

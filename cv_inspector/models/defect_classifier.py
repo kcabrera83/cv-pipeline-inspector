@@ -1,5 +1,3 @@
-"""Defect type classifier using RandomForest and GradientBoosting."""
-
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.model_selection import cross_val_score
@@ -19,7 +17,7 @@ class DefectClassifier:
             max_depth=15,
             min_samples_split=5,
             min_samples_leaf=2,
-            random_state=42,
+            random_state=2024,
             n_jobs=-1,
         )
         self.gradient_boosting = GradientBoostingClassifier(
@@ -27,7 +25,7 @@ class DefectClassifier:
             max_depth=8,
             learning_rate=0.1,
             subsample=0.8,
-            random_state=42,
+            random_state=2024,
         )
         self.is_trained = False
 
