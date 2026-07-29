@@ -1,47 +1,46 @@
-import streamlit as st, joblib, numpy as np
-from pathlib import Path; import sys; sys.path.insert(0, str(Path(__file__).parent))
 
-st.set_page_config(page_title="Pipeline Inspector", page_icon="\U0001f4ca")
-st.header("Pipeline Inspector")
+import streamlit as st
+import numpy as np
+import joblib, os
+import matplotlib.pyplot as plt
 
-p = Path(__file__).parent / 'outputs' / 'models'
-models = {'defect': joblib.load(p / 'defect_classifier.pkl'), 'severity': joblib.load(p / 'severity_estimator.pkl')}
+st.set_page_config(page_title="CV Pipeline Inspector", layout="wide")
+st.title(":microscope: CV Pipeline Inspector")
+st.caption("Visual defect detection on pipeline inspection imagery")
 
-with st.sidebar:
-    st.write('Configure parameters below')
-    c = st.columns(2)
-    mean = c[0].slider('Mean', 0, 255, 127)
-    std = c[1].slider('Std', 0, 100, 50)
-    c = st.columns(2)
-    edge = c[0].slider('Edge', 0, 1, 0)
-    entropy = c[1].slider('Entropy', 0, 8, 4)
-    c = st.columns(2)
-    red = c[0].slider('Red', 0, 255, 127)
-    green = c[1].slider('Green', 0, 255, 127)
-    c = st.columns(2)
-    blue = c[0].slider('Blue', 0, 255, 127)
-    hog = c[1].slider('Hog', 0, 1000, 500)
-    c = st.columns(2)
-    lap = c[0].slider('Lap', 0, 100, 50)
-    grad = c[1].slider('Grad', 0, 100, 50)
-    run = st.button('Analyze', use_container_width=True)
+models = {}
+for f in os.listdir("outputs/models"):
+    if f.endswith(".pkl"):
+        models[f.replace(".pkl", "")] = joblib.load(os.path.join("outputs/models", f))
 
-if run:
-    x = np.array([[mean, std, edge, entropy, red, green, blue, hog, lap, grad]])
-    st.divider()
-    m = models['defect']
-    if isinstance(m, dict):
-        X = m['scaler'].transform(x)
-        p = m['model'].predict(X)
-        v = m['label_encoder'].inverse_transform(p)[0] if 'label_encoder' in m else f'{p[0]:.2f}'
-    else:
-        v = f'{m.predict(x)[0]:.2f}'
-    st.metric('Defect', v)
-    m = models['severity']
-    if isinstance(m, dict):
-        X = m['scaler'].transform(x)
-        p = m['model'].predict(X)
-        v = m['label_encoder'].inverse_transform(p)[0] if 'label_encoder' in m else f'{p[0]:.2f}'
-    else:
-        v = f'{m.predict(x)[0]:.2f}'
-    st.metric('Severity', v)
+view = st.sidebar.radio("View", ["Inference", "Model Analysis", "Data Explorer"])
+
+if view == "Inference":
+    sel = st.selectbox("Model", list(models.keys()))
+    m = models[sel]
+    feats = m.get("feature_names", [f"x{i}" for i in range(4)])
+    cols = st.columns(2)
+    inp = [cols[i%2].number_input(f, value=0.0) for i, f in enumerate(feats)]
+    if st.button("Infer"):
+        X = np.array(inp).reshape(1, -1)
+        if m.get("scaler"):
+            X = m["scaler"].transform(X)
+        pred = m["model"].predict(X)[0]
+        st.metric("Result", f"{pred:.3f}")
+
+elif view == "Model Analysis":
+    sel = st.selectbox("Model", list(models.keys()))
+    m = models[sel]
+    st.json({k: str(type(v)) for k, v in m.items() if k != "model"})
+    st.write("Model type:", type(m["model"]).__name__)
+    if hasattr(m["model"], "feature_importances_"):
+        fig, ax = plt.subplots()
+        ax.bar(range(len(m["model"].feature_importances_)), m["model"].feature_importances_)
+        st.pyplot(fig)
+
+elif view == "Data Explorer":
+    n = st.slider("Samples", 10, 1000, 100)
+    X = np.random.randn(n, 4)
+    fig, ax = plt.subplots()
+    ax.plot(X)
+    st.pyplot(fig)
